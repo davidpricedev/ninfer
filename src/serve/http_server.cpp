@@ -258,6 +258,7 @@ std::shared_ptr<HttpServer::RequestLifecycle> HttpServer::begin_request(RequestL
 void HttpServer::record_request_start(const RequestLogContext& context) {
     request_jsonl_.write_request_start(context);
     operational_log_.request_start(context);
+    metrics_.begin_request(context.id, context.prompt_tokens);
 }
 
 void HttpServer::record_request_rejected(const RequestRejectionLogContext& context) {
@@ -269,6 +270,7 @@ void HttpServer::record_request_done(const RequestLogContext& context,
                                      const GenerationOutcome& outcome) {
     request_jsonl_.write_request_done(context, outcome);
     operational_log_.request_done(context, outcome);
+    metrics_.end_request(context.id);
     metrics_.record(outcome);
 }
 
@@ -276,6 +278,7 @@ void HttpServer::record_request_failure(const RequestLogContext& context,
                                         const RequestFailure& failure) {
     request_jsonl_.write_request_error(context, failure.machine_message);
     operational_log_.request_failure(context, failure);
+    metrics_.end_request(context.id);
 }
 
 void HttpServer::record_response_failure(std::uint64_t request_id, const RequestFailure& failure) {
@@ -433,7 +436,27 @@ void HttpServer::register_routes() {
                         "application/json");
     });
     server_.Get("/metrics", [this](const httplib::Request&, httplib::Response& res) {
-        res.set_content(metrics_.render(), "text/plain; version=0.0.4");
+        res.set_content(metrics_.render(options_.max_concurrency), "text/plain; version=0.0.4");
+    });
+    // llama.cpp-shaped slot detail. The Engine has no exposed slot table, so
+    // the first `max_concurrency` in-flight requests (FIFO order) count as
+    // processing and the rest of the table reads idle; per-slot cache detail
+    // is unknown mid-flight and reported as zero.
+    server_.Get("/slots", [this](const httplib::Request&, httplib::Response& res) {
+        const auto active = metrics_.active_snapshot();
+        const bool speculative =
+            options_.speculative.backend != ninfer::SpeculativeBackend::None;
+        nlohmann::json slots = nlohmann::json::array();
+        for (std::uint32_t i = 0; i < options_.max_concurrency; ++i) {
+            const bool busy = i < active.size();
+            slots.push_back({{"id", i},
+                             {"is_processing", busy},
+                             {"n_ctx", options_.max_context},
+                             {"n_prompt_tokens", busy ? active[i].second : 0},
+                             {"n_prompt_tokens_cache", 0},
+                             {"speculative", speculative}});
+        }
+        res.set_content(slots.dump(), "application/json");
     });
     server_.Get("/v1/models", [this](const httplib::Request& req, httplib::Response& res) {
         handle_models(req, res);
