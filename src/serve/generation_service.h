@@ -114,6 +114,9 @@ public:
         return engine_->media_cache_summary();
     }
 
+    // False once the executor has failed or begun shutting down; such a state is permanent.
+    [[nodiscard]] bool engine_healthy() const { return engine_ && engine_->healthy(); }
+
     [[nodiscard]] ninfer::ModelSamplingDefaults sampling_defaults() const {
         return engine_->sampling_defaults();
     }

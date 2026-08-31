@@ -102,6 +102,12 @@ public:
         return !stopping_;
     }
 
+    // False once shutdown has begun; matching EngineCore's latched-failure contract.
+    [[nodiscard]] bool healthy() const {
+        std::lock_guard lock(queue_mutex_);
+        return !stopping_;
+    }
+
     void reset_memory_peaks() noexcept {
         try {
             std::scoped_lock lock(execution_mutex_);

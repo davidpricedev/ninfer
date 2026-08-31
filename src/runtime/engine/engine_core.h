@@ -260,6 +260,13 @@ public:
         return !stopping_ && !failed_;
     }
 
+    // False once the worker loop has torn the executor down (`fail_all`) or shutdown has begun.
+    // Latched failures are permanent, so /health can report the process as unserviceable.
+    [[nodiscard]] bool healthy() const {
+        std::lock_guard lock(queue_mutex_);
+        return !stopping_ && !failed_;
+    }
+
     void reset_memory_peaks() noexcept {
         try {
             std::scoped_lock lock(execution_mutex_);

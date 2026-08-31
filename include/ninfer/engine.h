@@ -108,6 +108,8 @@ public:
     [[nodiscard]] MediaCacheSummary media_cache_summary() const;
     [[nodiscard]] bool is_available() const;
 
+    // False once the executor has failed or begun shutting down; such a state is permanent.
+    [[nodiscard]] bool healthy() const;
     void reset_memory_peaks() noexcept;
 
 private:

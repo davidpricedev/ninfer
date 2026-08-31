@@ -234,6 +234,12 @@ HttpServer::RequestLifecycle::RequestLifecycle(HttpServer& owner, RequestLogCont
     owner_->record_request_start(context_);
 }
 
+HttpServer::RequestLifecycle::~RequestLifecycle() {
+    // A lifecycle abandoned in Pending (an exception unwound before done/failure ran) must
+    // still release its in-flight metrics entry, or the gauges leak it forever.
+    if (claim(State::Error)) { owner_->metrics_released(context_.id); }
+}
+
 bool HttpServer::RequestLifecycle::claim(State terminal) noexcept {
     State expected = State::Pending;
     return state_.compare_exchange_strong(expected, terminal, std::memory_order_acq_rel);
@@ -279,6 +285,10 @@ void HttpServer::record_request_failure(const RequestLogContext& context,
     request_jsonl_.write_request_error(context, failure.machine_message);
     operational_log_.request_failure(context, failure);
     metrics_.end_request(context.id);
+}
+
+void HttpServer::metrics_released(std::uint64_t request_id) {
+    metrics_.end_request(request_id);
 }
 
 void HttpServer::record_response_failure(std::uint64_t request_id, const RequestFailure& failure) {
@@ -429,10 +439,13 @@ void HttpServer::register_routes() {
             }
         });
 
+    // Report the executor's own state: a latched failure is permanent, so answering "ok"
+    // here leaves a process that 503s every request looking healthy to any supervisor.
     server_.Get("/health", [this](const httplib::Request&, httplib::Response& res) {
-        const bool available = service_ != nullptr && service_->is_available();
-        res.status           = available ? 200 : 503;
-        res.set_content(nlohmann::json{{"status", available ? "ok" : "unavailable"}}.dump(),
+        const bool ready =
+            service_ == nullptr || (service_->is_available() && service_->engine_healthy());
+        res.status = ready ? 200 : 503;
+        res.set_content(nlohmann::json{{"status", ready ? "ok" : "error"}}.dump(),
                         "application/json");
     });
     server_.Get("/metrics", [this](const httplib::Request&, httplib::Response& res) {

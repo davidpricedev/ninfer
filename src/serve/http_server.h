@@ -52,6 +52,7 @@ private:
     class RequestLifecycle {
     public:
         RequestLifecycle(HttpServer& owner, RequestLogContext context);
+        ~RequestLifecycle();
 
         void done(const GenerationOutcome& outcome);
         void failure(const RequestFailure& failure);
@@ -95,6 +96,8 @@ private:
     void record_request_failure(const RequestLogContext& context, const RequestFailure& failure);
     void record_response_failure(std::uint64_t request_id, const RequestFailure& failure);
     void record_throughput(const ThroughputReport& report);
+    // Releases one in-flight metrics entry by request id (abandoned-lifecycle safety net).
+    void metrics_released(std::uint64_t request_id);
     void run_stats_reporter();
     void stop_stats_reporter();
 
